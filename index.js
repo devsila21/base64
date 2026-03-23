@@ -1,9 +1,15 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
-const QRCode = require('qrcode');
-const pino = require('pino');
+const pino = require("pino");
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    delay,
+    makeCacheableSignalKeyStore,
+    Browsers,
+    DisconnectReason
+} = require("@whiskeysockets/baileys");
 const crypto = require('crypto');
 
 const app = express();
@@ -14,12 +20,29 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname));
 
+// Create temp directory
+const tempDir = path.join(__dirname, 'temp');
+fs.ensureDirSync(tempDir);
+
 // Store active sessions
 const activeSessions = new Map();
 
-// Create sessions directory
-const sessionsDir = path.join(__dirname, 'sessions');
-fs.ensureDirSync(sessionsDir);
+// Bot configuration
+const BOT_NAME = "NOCTURNAL";
+const BOT_OWNER = "SILA";
+const BOT_VERSION = "4.0.0";
+
+// Helper function to remove temp folder
+function removeFile(FilePath) {
+    if (!fs.existsSync(FilePath)) return false;
+    fs.rmSync(FilePath, { recursive: true, force: true });
+    return true;
+}
+
+// Generate random ID
+function makeid(length = 8) {
+    return crypto.randomBytes(length).toString('hex');
+}
 
 // ============================================
 // 🌙 ROUTES
@@ -40,190 +63,288 @@ app.get('/pair', (req, res) => {
     res.sendFile(path.join(__dirname, 'pair.html'));
 });
 
-// Generate QR Code session
-app.post('/api/qr-session', async (req, res) => {
-    const sessionId = crypto.randomBytes(8).toString('hex');
-    const sessionPath = path.join(sessionsDir, sessionId);
-    
-    fs.ensureDirSync(sessionPath);
-    
-    let qrCode = null;
+// QR Code session endpoint
+app.get('/api/qr-session', async (req, res) => {
+    const sessionId = makeid();
+    let qrSent = false;
     let sessionBase64 = null;
     let timeoutId = null;
-    
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
-    
-    const sock = makeWASocket({
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
-        browser: Browsers.macOS('NOCTURNAL-MD'),
-        auth: state,
-        getMessage: async () => undefined
-    });
-    
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+
+    async function generateQR() {
+        const sessionPath = path.join(tempDir, sessionId);
+        fs.ensureDirSync(sessionPath);
         
-        if (qr) {
-            qrCode = await QRCode.toDataURL(qr);
-            console.log(`QR generated for session ${sessionId}`);
-        }
+        const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
         
-        if (connection === 'open') {
-            console.log(`Session ${sessionId} connected!`);
-            
-            // Wait for creds to save
-            setTimeout(async () => {
-                try {
-                    const credsPath = path.join(sessionPath, 'creds.json');
-                    if (fs.existsSync(credsPath)) {
-                        const credsData = fs.readFileSync(credsPath, 'utf8');
-                        sessionBase64 = Buffer.from(credsData).toString('base64');
-                        
-                        // Send session to user's inbox
-                        const userJid = sock.user.id;
-                        const sessionMessage = `🌙 *NOCTURNAL MD - SESSION READY*\n\n━━━━━━━━━━━━━━━━━━━━\n\n*Your Session Base64:*\n\`\`\`${sessionBase64}\`\`\`\n\n━━━━━━━━━━━━━━━━━━━━\n\n*How to use:*\n1. Copy the session above\n2. Paste in your set.js file\n3. Deploy your bot!\n\n> © ♱ NOCTURNAL ♱ | SILA`;
-                        
-                        await sock.sendMessage(userJid, { text: sessionMessage });
-                        
-                        activeSessions.set(sessionId, { sock, sessionBase64, status: 'ready' });
+        try {
+            const sock = makeWASocket({
+                version: (await (await fetch('https://raw.githubusercontent.com/WhiskeySockets/Baileys/master/src/Defaults/baileys-version.json')).json()).version,
+                auth: {
+                    creds: state.creds,
+                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
+                },
+                printQRInTerminal: false,
+                logger: pino({ level: "fatal" }).child({ level: "fatal" }),
+                browser: Browsers("Chrome"),
+                getMessage: async () => undefined
+            });
+
+            sock.ev.on('creds.update', saveCreds);
+
+            sock.ev.on("connection.update", async (s) => {
+                const { connection, lastDisconnect, qr } = s;
+
+                if (qr && !qrSent) {
+                    qrSent = true;
+                    const qrDataUrl = await (async () => {
+                        const QRCode = require('qrcode');
+                        return await QRCode.toDataURL(qr);
+                    })();
+                    
+                    if (!res.headersSent) {
+                        res.json({ success: true, sessionId, qr: qrDataUrl, status: 'qr_ready' });
                     }
-                } catch (e) {
-                    console.error('Error saving session:', e);
+                    
+                    // Set timeout for QR expiration
+                    timeoutId = setTimeout(() => {
+                        if (activeSessions.get(sessionId)?.status !== 'connected') {
+                            sock.end();
+                            removeFile(sessionPath);
+                            activeSessions.delete(sessionId);
+                        }
+                    }, 120000);
                 }
-            }, 2000);
-            
-            if (timeoutId) clearTimeout(timeoutId);
-            res.json({ success: true, sessionId, status: 'connected' });
-        }
-        
-        if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            if (statusCode === DisconnectReason.loggedOut) {
-                console.log(`Session ${sessionId} logged out`);
-                activeSessions.delete(sessionId);
+
+                if (connection === "open") {
+                    console.log(`✅ Session ${sessionId} connected!`);
+                    
+                    await delay(3000);
+                    
+                    try {
+                        const credsPath = path.join(sessionPath, 'creds.json');
+                        if (fs.existsSync(credsPath)) {
+                            const credsData = fs.readFileSync(credsPath, 'utf8');
+                            sessionBase64 = Buffer.from(credsData).toString('base64');
+                            
+                            // Send session to user's inbox
+                            const userJid = sock.user.id;
+                            const sessionMessage = `
+╔══════════════════════════════════╗
+║  🌙 ♱ NOCTURNAL MD ♱ 🌙
+╠══════════════════════════════════╣
+║  ✅ *SESSION GENERATED SUCCESSFULLY*
+╠══════════════════════════════════╣
+║  📋 *Your Session Base64:*
+║  
+║  \`${sessionBase64}\`
+║  
+╠══════════════════════════════════╣
+║  📌 *How to Use:*
+║  1. Copy the session above
+║  2. Paste in your set.js file
+║  3. Deploy your bot!
+╠══════════════════════════════════╣
+║  🧑‍💻 *Owner:* SILA
+║  🤖 *Bot:* NOCTURNAL MD
+║  📦 *Version:* ${BOT_VERSION}
+╚══════════════════════════════════╝
+`;
+                            await sock.sendMessage(userJid, { text: sessionMessage });
+                            
+                            activeSessions.set(sessionId, { 
+                                sock, 
+                                sessionBase64, 
+                                status: 'connected',
+                                userJid 
+                            });
+                            
+                            if (timeoutId) clearTimeout(timeoutId);
+                            
+                            // Close connection after 5 seconds
+                            setTimeout(() => {
+                                sock.end();
+                                removeFile(sessionPath);
+                            }, 5000);
+                        }
+                    } catch (e) {
+                        console.error('Error saving session:', e);
+                    }
+                } else if (connection === "close" && lastDisconnect?.error?.output?.statusCode !== 401) {
+                    console.log(`Session ${sessionId} closed, restarting...`);
+                    await delay(5000);
+                    generateQR();
+                }
+            });
+
+            activeSessions.set(sessionId, { sock, status: 'pending' });
+
+        } catch (err) {
+            console.log("Service error:", err);
+            removeFile(sessionPath);
+            if (!res.headersSent) {
+                res.json({ success: false, error: "Service is currently unavailable" });
             }
         }
-    });
-    
-    sock.ev.on('creds.update', saveCreds);
-    
-    // Send QR to client
-    const checkQR = setInterval(async () => {
-        if (qrCode) {
-            clearInterval(checkQR);
-            res.json({ success: true, sessionId, qr: qrCode, status: 'qr_ready' });
-            
-            // Set timeout to close session after 2 minutes if not connected
-            timeoutId = setTimeout(() => {
-                if (activeSessions.has(sessionId) && activeSessions.get(sessionId).status !== 'ready') {
-                    console.log(`Session ${sessionId} expired`);
-                    sock.end();
-                    activeSessions.delete(sessionId);
-                }
-            }, 120000);
-        }
-    }, 1000);
-    
-    activeSessions.set(sessionId, { sock, status: 'pending' });
+    }
+
+    return await generateQR();
 });
 
-// Generate Pairing Code session
-app.post('/api/pair-session', async (req, res) => {
-    const { phoneNumber } = req.body;
-    
-    if (!phoneNumber) {
-        return res.status(400).json({ error: 'Phone number is required' });
-    }
-    
-    // Clean phone number
-    let cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-    if (!cleanNumber.startsWith('255') && !cleanNumber.startsWith('1')) {
-        cleanNumber = '255' + cleanNumber;
-    }
-    
-    const sessionId = crypto.randomBytes(8).toString('hex');
-    const sessionPath = path.join(sessionsDir, sessionId);
-    
-    fs.ensureDirSync(sessionPath);
-    
-    let pairingCode = null;
+// Pairing code session endpoint
+app.get('/api/pair-session', async (req, res) => {
+    const sessionId = makeid();
+    let num = req.query.number;
+    let pairingCodeSent = false;
     let sessionBase64 = null;
     let timeoutId = null;
-    
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
-    
-    const sock = makeWASocket({
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
-        browser: Browsers.macOS('NOCTURNAL-MD'),
-        auth: state,
-        getMessage: async () => undefined
-    });
-    
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+
+    if (!num) {
+        return res.status(400).json({ error: 'Phone number is required' });
+    }
+
+    async function generatePairingCode() {
+        const sessionPath = path.join(tempDir, sessionId);
+        fs.ensureDirSync(sessionPath);
         
-        if (connection === 'open') {
-            console.log(`Session ${sessionId} connected!`);
-            
-            setTimeout(async () => {
-                try {
-                    const credsPath = path.join(sessionPath, 'creds.json');
-                    if (fs.existsSync(credsPath)) {
-                        const credsData = fs.readFileSync(credsPath, 'utf8');
-                        sessionBase64 = Buffer.from(credsData).toString('base64');
-                        
-                        const userJid = `${cleanNumber}@s.whatsapp.net`;
-                        const sessionMessage = `🌙 *NOCTURNAL MD - SESSION READY*\n\n━━━━━━━━━━━━━━━━━━━━\n\n*Your Session Base64:*\n\`\`\`${sessionBase64}\`\`\`\n\n━━━━━━━━━━━━━━━━━━━━\n\n*How to use:*\n1. Copy the session above\n2. Paste in your set.js file\n3. Deploy your bot!\n\n> © ♱ NOCTURNAL ♱ | SILA`;
-                        
-                        await sock.sendMessage(userJid, { text: sessionMessage });
-                        
-                        activeSessions.set(sessionId, { sock, sessionBase64, status: 'ready' });
-                        
-                        if (timeoutId) clearTimeout(timeoutId);
-                        res.json({ success: true, sessionId, status: 'connected' });
-                    }
-                } catch (e) {
-                    console.error('Error saving session:', e);
+        const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+        
+        try {
+            const sock = makeWASocket({
+                version: (await (await fetch('https://raw.githubusercontent.com/WhiskeySockets/Baileys/master/src/Defaults/baileys-version.json')).json()).version,
+                auth: {
+                    creds: state.creds,
+                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
+                },
+                printQRInTerminal: false,
+                logger: pino({ level: "fatal" }).child({ level: "fatal" }),
+                browser: Browsers("Chrome"),
+                getMessage: async () => undefined
+            });
+
+            sock.ev.on('creds.update', saveCreds);
+
+            sock.ev.on("connection.update", async (s) => {
+                const { connection, lastDisconnect, qr } = s;
+
+                if (qr && !pairingCodeSent && !sock.authState.creds.registered) {
+                    // QR fallback - ignore, use pairing code instead
                 }
-            }, 2000);
-        }
-        
-        if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            if (statusCode === DisconnectReason.loggedOut) {
-                console.log(`Session ${sessionId} logged out`);
-                activeSessions.delete(sessionId);
+
+                if (connection === "open") {
+                    console.log(`✅ Session ${sessionId} connected!`);
+                    
+                    await delay(3000);
+                    
+                    try {
+                        const credsPath = path.join(sessionPath, 'creds.json');
+                        if (fs.existsSync(credsPath)) {
+                            const credsData = fs.readFileSync(credsPath, 'utf8');
+                            sessionBase64 = Buffer.from(credsData).toString('base64');
+                            
+                            // Send session to user's inbox
+                            const userJid = `${cleanNumber(num)}@s.whatsapp.net`;
+                            const sessionMessage = `
+╔══════════════════════════════════╗
+║  🌙 ♱ NOCTURNAL MD ♱ 🌙
+╠══════════════════════════════════╣
+║  ✅ *SESSION GENERATED SUCCESSFULLY*
+╠══════════════════════════════════╣
+║  📋 *Your Session Base64:*
+║  
+║  \`${sessionBase64}\`
+║  
+╠══════════════════════════════════╣
+║  📌 *How to Use:*
+║  1. Copy the session above
+║  2. Paste in your set.js file
+║  3. Deploy your bot!
+╠══════════════════════════════════╣
+║  🧑‍💻 *Owner:* SILA
+║  🤖 *Bot:* NOCTURNAL MD
+║  📦 *Version:* ${BOT_VERSION}
+╚══════════════════════════════════╝
+`;
+                            await sock.sendMessage(userJid, { text: sessionMessage });
+                            
+                            activeSessions.set(sessionId, { 
+                                sock, 
+                                sessionBase64, 
+                                status: 'connected',
+                                userJid 
+                            });
+                            
+                            if (timeoutId) clearTimeout(timeoutId);
+                            
+                            // Close connection after 5 seconds
+                            setTimeout(() => {
+                                sock.end();
+                                removeFile(sessionPath);
+                            }, 5000);
+                        }
+                    } catch (e) {
+                        console.error('Error saving session:', e);
+                    }
+                } else if (connection === "close" && lastDisconnect?.error?.output?.statusCode !== 401) {
+                    console.log(`Session ${sessionId} closed, restarting...`);
+                    await delay(5000);
+                    generatePairingCode();
+                }
+            });
+
+            // Generate pairing code
+            try {
+                await delay(1500);
+                let cleanPhone = num.replace(/[^0-9]/g, '');
+                if (!cleanPhone.startsWith('255') && !cleanPhone.startsWith('1')) {
+                    cleanPhone = '255' + cleanPhone;
+                }
+                
+                const code = await sock.requestPairingCode(cleanPhone);
+                console.log(`Pairing code for ${cleanPhone}: ${code}`);
+                
+                if (!res.headersSent) {
+                    res.json({ success: true, sessionId, pairingCode: code, status: 'pairing_ready' });
+                }
+                
+                activeSessions.set(sessionId, { sock, status: 'pending', phone: cleanPhone });
+                
+                // Set timeout for pairing expiration
+                timeoutId = setTimeout(() => {
+                    if (activeSessions.get(sessionId)?.status !== 'connected') {
+                        sock.end();
+                        removeFile(sessionPath);
+                        activeSessions.delete(sessionId);
+                    }
+                }, 120000);
+                
+            } catch (e) {
+                console.log("Pairing code error:", e.message);
+                if (!res.headersSent) {
+                    res.json({ success: false, error: "Failed to generate pairing code" });
+                }
+                removeFile(sessionPath);
+            }
+
+        } catch (err) {
+            console.log("Service error:", err);
+            removeFile(sessionPath);
+            if (!res.headersSent) {
+                res.json({ success: false, error: "Service is currently unavailable" });
             }
         }
-    });
-    
-    sock.ev.on('creds.update', saveCreds);
-    
-    // Start pairing
-    try {
-        pairingCode = await sock.requestPairingCode(cleanNumber);
-        console.log(`Pairing code for ${cleanNumber}: ${pairingCode}`);
-        
-        res.json({ success: true, sessionId, pairingCode, status: 'pairing_ready' });
-        
-        // Set timeout to close session after 2 minutes if not connected
-        timeoutId = setTimeout(() => {
-            if (activeSessions.has(sessionId) && activeSessions.get(sessionId).status !== 'ready') {
-                console.log(`Session ${sessionId} expired`);
-                sock.end();
-                activeSessions.delete(sessionId);
-            }
-        }, 120000);
-        
-    } catch (error) {
-        console.error('Pairing error:', error);
-        res.status(500).json({ error: 'Failed to generate pairing code' });
     }
     
-    activeSessions.set(sessionId, { sock, status: 'pending' });
+    return await generatePairingCode();
 });
+
+// Clean phone number function
+function cleanNumber(num) {
+    let clean = num.replace(/[^0-9]/g, '');
+    if (!clean.startsWith('255') && !clean.startsWith('1')) {
+        clean = '255' + clean;
+    }
+    return clean;
+}
 
 // Check session status
 app.get('/api/session-status/:sessionId', (req, res) => {
@@ -231,7 +352,18 @@ app.get('/api/session-status/:sessionId', (req, res) => {
     const session = activeSessions.get(sessionId);
     
     if (session) {
-        res.json({ exists: true, status: session.status, sessionBase64: session.sessionBase64 });
+        res.json({ 
+            exists: true, 
+            status: session.status, 
+            sessionBase64: session.sessionBase64 
+        });
+        
+        // Clean up after sending
+        if (session.status === 'connected') {
+            setTimeout(() => {
+                activeSessions.delete(sessionId);
+            }, 10000);
+        }
     } else {
         res.json({ exists: false });
     }
@@ -240,11 +372,13 @@ app.get('/api/session-status/:sessionId', (req, res) => {
 // Start server
 app.listen(port, () => {
     console.log(`
-    🌙 ♱ NOCTURNAL MD - SESSION MANAGER ♱ 🌙
-    ============================================
-    🚀 Server running on: http://localhost:${port}
-    🌐 Open in browser to get your session
-    👑 Owner: SILA
-    ============================================
+    ╔════════════════════════════════════════╗
+    ║  🌙 ♱ NOCTURNAL MD - SESSION MANAGER ♱ 🌙
+    ╠════════════════════════════════════════╣
+    ║  🚀 Server: http://localhost:${port}
+    ║  👑 Owner: SILA
+    ║  🤖 Bot: NOCTURNAL MD
+    ║  📦 Version: ${BOT_VERSION}
+    ╚════════════════════════════════════════╝
     `);
 });
