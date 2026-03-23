@@ -290,11 +290,147 @@
                     <label>📋 Your Session Base64</label>
                     <textarea class="session-text" id="sessionBase64" readonly></textarea>
                     <button class="copy-btn" onclick="copySession()">📋 Copy Session</button>
+                    <p style="font-size: 0.75rem; color: #22c55e; margin-top: 10px;">✅ Session will also be sent to your WhatsApp inbox!</p>
                 </div>
             </div>
         </div>
     </div>
 
-    <script src="/pair.js"></script>
+    <script>
+        let sessionId = null;
+        let timerInterval = null;
+        let timeLeft = 120;
+
+        async function startPairing() {
+            const phoneInput = document.getElementById('phoneNumber');
+            let phoneNumber = phoneInput.value.trim();
+            
+            if (!phoneNumber) {
+                alert('Please enter your phone number');
+                return;
+            }
+            
+            // Clean phone number
+            phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
+            
+            const pairBtn = document.getElementById('pairBtn');
+            pairBtn.disabled = true;
+            pairBtn.textContent = 'Generating...';
+            
+            try {
+                const response = await fetch(`/api/pair-session?number=${phoneNumber}`);
+                const data = await response.json();
+                
+                if (data.success && data.pairingCode) {
+                    sessionId = data.sessionId;
+                    
+                    // Show pairing code
+                    const pairingSection = document.getElementById('pairingSection');
+                    const pairingCodeSpan = document.getElementById('pairingCode');
+                    pairingCodeSpan.textContent = data.pairingCode;
+                    pairingSection.style.display = 'block';
+                    
+                    // Show timer section
+                    const timerSection = document.getElementById('timerSection');
+                    timerSection.style.display = 'block';
+                    
+                    // Start timer
+                    startTimer();
+                    
+                    // Check session status
+                    checkSessionStatus();
+                    
+                    // Add status
+                    const statusDiv = document.createElement('div');
+                    statusDiv.className = 'status loading';
+                    statusDiv.id = 'status';
+                    statusDiv.innerHTML = '✅ Pairing code generated! Enter it in WhatsApp';
+                    document.querySelector('.card').appendChild(statusDiv);
+                } else {
+                    alert(data.error || 'Failed to generate pairing code');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Failed to generate pairing code. Please try again.');
+            } finally {
+                pairBtn.disabled = false;
+                pairBtn.textContent = 'Generate Pairing Code →';
+            }
+        }
+
+        function startTimer() {
+            const timerElement = document.getElementById('timer');
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                
+                const minutes = Math.floor(timeLeft / 60);
+                const seconds = timeLeft % 60;
+                timerElement.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    timerElement.textContent = '00:00';
+                    
+                    const statusDiv = document.getElementById('status');
+                    if (statusDiv) {
+                        statusDiv.className = 'status error';
+                        statusDiv.innerHTML = '⏰ Session expired! Please refresh and try again.';
+                    }
+                }
+            }, 1000);
+        }
+
+        async function checkSessionStatus() {
+            const checkInterval = setInterval(async () => {
+                if (!sessionId) return;
+                
+                try {
+                    const response = await fetch(`/api/session-status/${sessionId}`);
+                    const data = await response.json();
+                    
+                    if (data.exists && data.status === 'connected' && data.sessionBase64) {
+                        clearInterval(checkInterval);
+                        clearInterval(timerInterval);
+                        
+                        // Show session
+                        const sessionSection = document.getElementById('sessionSection');
+                        const sessionTextarea = document.getElementById('sessionBase64');
+                        
+                        sessionTextarea.value = data.sessionBase64;
+                        sessionSection.style.display = 'block';
+                        
+                        const statusDiv = document.getElementById('status');
+                        if (statusDiv) {
+                            statusDiv.className = 'status success';
+                            statusDiv.innerHTML = '✅ Session generated successfully! Check your WhatsApp inbox or copy below.';
+                        }
+                        
+                        const timerElement = document.getElementById('timer');
+                        if (timerElement) {
+                            timerElement.style.color = '#22c55e';
+                        }
+                    }
+                } catch (error) {
+                    console.error('Status check error:', error);
+                }
+            }, 3000);
+        }
+
+        function copySession() {
+            const sessionTextarea = document.getElementById('sessionBase64');
+            sessionTextarea.select();
+            document.execCommand('copy');
+            
+            // Show toast notification
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.innerHTML = '📋 Session copied to clipboard!';
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.remove();
+            }, 2000);
+        }
+    </script>
 </body>
 </html>
