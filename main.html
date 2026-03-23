@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>♱ NOCTURNAL MD | Session Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #0a0f1a 50%, #0a0a0a 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* Animated background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at 20% 50%, rgba(0, 100, 255, 0.08) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path fill="none" stroke="rgba(0,100,255,0.03)" stroke-width="0.5" d="M10,10 L90,10 M10,20 L90,20 M10,30 L90,30 M10,40 L90,40 M10,50 L90,50 M10,60 L90,60 M10,70 L90,70 M10,80 L90,80 M10,90 L90,90 M10,10 L10,90 M20,10 L20,90 M30,10 L30,90 M40,10 L40,90 M50,10 L50,90 M60,10 L60,90 M70,10 L70,90 M80,10 L80,90 M90,10 L90,90"/></svg>');
+            background-size: 40px 40px;
+            pointer-events: none;
+            opacity: 0.3;
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 90%;
+            margin: 40px auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header Section */
+        .header {
+            text-align: center;
+            margin-bottom: 60px;
+            animation: fadeInDown 0.8s ease;
+        }
+
+        .logo {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            filter: drop-shadow(0 0 20px rgba(0, 100, 255, 0.3));
+            animation: glow 2s ease-in-out infinite;
+        }
+
+        @keyframes glow {
+            0%, 100% { filter: drop-shadow(0 0 20px rgba(0, 100, 255, 0.3)); }
+            50% { filter: drop-shadow(0 0 40px rgba(0, 100, 255, 0.6)); }
+        }
+
+        h1 {
+            font-size: 3rem;
+            background: linear-gradient(135deg, #fff 0%, #3b82f6 50%, #1e3a8a 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 15px;
+            letter-spacing: 2px;
+        }
+
+        .badge {
+            display: inline-block;
+            background: rgba(59, 130, 246, 0.2);
+            border: 1px solid rgba(59, 130, 246, 0.5);
+            padding: 8px 20px;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            color: #3b82f6;
+            margin-top: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        .subtitle {
+            color: #94a3b8;
+            margin-top: 20px;
+            font-size: 1.1rem;
+        }
+
+        /* Cards Grid */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 30px;
+            margin-bottom: 50px;
+        }
+
+        .card {
+            background: rgba(10, 15, 26, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 24px;
+            padding: 40px 30px;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .card:hover::before {
+            left: 100%;
+        }
+
+        .card:hover {
+            transform: translateY(-10px);
+            border-color: rgba(59, 130, 246, 0.5);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3), 0 0 20px rgba(59, 130, 246, 0.2);
+        }
+
+        .card-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+            background: linear-gradient(135deg, #fff, #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .card p {
+            color: #94a3b8;
+            margin-bottom: 25px;
+            line-height: 1.6;
+        }
+
+        .card-btn {
+            background: linear-gradient(135deg, #3b82f6, #1e3a8a);
+            border: none;
+            padding: 12px 30px;
+            border-radius: 50px;
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card-btn::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+
+        .card-btn:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .card-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3);
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 30px;
+            border-top: 1px solid rgba(59, 130, 246, 0.2);
+            margin-top: 40px;
+        }
+
+        .footer p {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+
+        .footer .owner {
+            color: #3b82f6;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        /* Animations */
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .card {
+            animation: fadeInUp 0.6s ease forwards;
+            opacity: 0;
+        }
+
+        .card:nth-child(1) { animation-delay: 0.2s; }
+        .card:nth-child(2) { animation-delay: 0.4s; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            h1 { font-size: 2rem; }
+            .logo { font-size: 3rem; }
+            .card { padding: 30px 20px; }
+            .card h2 { font-size: 1.5rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🌙</div>
+            <h1>♱ NOCTURNAL MD</h1>
+            <div class="badge">PREMIUM SESSION MANAGER</div>
+            <p class="subtitle">Get your session in seconds • Secure • Fast • Reliable</p>
+        </div>
+
+        <div class="cards-grid">
+            <div class="card" onclick="location.href='/qr'">
+                <div class="card-icon">📱</div>
+                <h2>QR Code Method</h2>
+                <p>Scan QR code with WhatsApp to get your session. Easy and fast!</p>
+                <button class="card-btn">Get Session via QR →</button>
+            </div>
+
+            <div class="card" onclick="location.href='/pair'">
+                <div class="card-icon">🔗</div>
+                <h2>Pairing Code Method</h2>
+                <p>Enter your phone number and get pairing code. Works anywhere!</p>
+                <button class="card-btn">Get Session via Pairing →</button>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>⚡ Session expires in 2 minutes for security</p>
+            <p>📱 Make sure WhatsApp is updated to latest version</p>
+            <p class="owner">© 2026 ♱ NOCTURNAL MD | Created by SILA</p>
+        </div>
+    </div>
+</body>
+</html>
